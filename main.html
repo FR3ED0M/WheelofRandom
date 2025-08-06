@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wheel of Random</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="CSS/styles.css">
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-5">
+    <div class="container">
+        <!-- Input Section -->
+        <div class="input-section flex flex-col gap-4">
+            <h2 class="text-2xl font-bold text-gray-800 text-center">Enter List Items</h2>
+            <p class="text-gray-600 text-center">Enter each item on a new line (e.g., names, tasks, ideas).</p>
+            <textarea
+                id="itemInput"
+                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition duration-200 ease-in-out shadow-sm"
+                placeholder="Item 1&#10;Item 2&#10;Item 3"
+            ></textarea>
+            <button id="spinButton" class="spin-button">
+                Spin the Wheel!
+            </button>
+            <div id="resultDisplay" class="result-display hidden">
+                <span id="selectedItem"></span>
+            </div>
+        </div>
+
+        <!-- Wheel Section -->
+        <div class="wheel-section flex flex-col items-center justify-center gap-4">
+            <h2 class="text-2xl font-bold text-gray-800 text-center">Wheel of Random</h2>
+            <div class="wheel-wrapper">
+                <canvas id="wheelCanvas" width="400" height="400"></canvas>
+                <div class="pointer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const itemInput = document.getElementById('itemInput');
+        const spinButton = document.getElementById('spinButton');
+        const wheelCanvas = document.getElementById('wheelCanvas');
+        const resultDisplay = document.getElementById('resultDisplay');
+        const selectedItemSpan = document.getElementById('selectedItem');
+        const ctx = wheelCanvas.getContext('2d');
+
+        let items = [];
+        let arc = 0; // Angle for each segment
+
+        let isSpinning = false;
+        let initialAnimationStartAngle = 0; // Stores the wheel's angle when animation starts
+        let targetAnimationEndAngle = 0;    // Stores the final angle the wheel should stop at
+        let selectedItemIndexOnStop = 0;    // Stores the index of the item that will be selected
+        let animationStartTime = null;      // Time when the current animation frame started
+        let spinTimeTotal = 4000;           // Fixed duration for the spin animation (e.g., 4 seconds)
+        let startAngle = 0;                 // Initialize startAngle to 0
+
+        // Predefined array of distinct colors for wheel segments
+        const segmentColors = [
+            '#FF6347', // Tomato
+            '#4682B4', // SteelBlue
+            '#32CD32', // LimeGreen
+            '#FFD700', // Gold
+            '#9370DB', // MediumPurple
+            '#00CED1', // DarkTurquoise
+            '#FF69B4', // HotPink
+            '#8B4513', // SaddleBrown
+            '#20B2AA', // LightSeaGreen
+            '#DC143C', // Crimson
+            '#4169E1', // RoyalBlue
+            '#ADFF2F', // GreenYellow
+            '#FF8C00', // DarkOrange
+            '#6A5ACD', // SlateBlue
+            '#5F9EA0', // CadetBlue
+            '#FF1493', // DeepPink
+            '#D2B48C', // Tan
+            '#7CFC00', // LawnGreen
+            '#FF4500', // OrangeRed
+            '#1E90FF'  // DodgerBlue
+        ];
+
+        // Function to get a color from the predefined array based on index
+        function getSegmentColor(index) {
+            return segmentColors[index % segmentColors.length];
+        }
+
+        // Function to draw a segment of the wheel
+        function drawSegment(currentArc, angle, color, text) {
+            const centerX = wheelCanvas.width / 2;
+            const centerY = wheelCanvas.height / 2;
+            const radius = Math.max(0, Math.min(centerX, centerY) - 10); 
+
+            if (radius <= 0) {
+                return;
+            }
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, angle, angle + currentArc, false);
+            ctx.lineTo(centerX, centerY);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.save();
+
+            // --- Text Drawing Logic ---
+            ctx.translate(centerX, centerY); // Move origin to center of wheel
+            ctx.rotate(angle + currentArc / 2); // Rotate to the middle of the segment
+
+            // Now, X-axis is along the segment's bisector (radial line).
+            // Move to a point near the outer edge on the X-axis for text placement.
+            const textRadialOffset = radius - 30; // 30px padding from outer edge
+            ctx.translate(textRadialOffset, 0); // Move along the X-axis (radial line)
+
+            // Rotate an additional 90 degrees (PI/2) to make text vertical.
+            // With this rotation, the text will read from outside (positive Y) towards the center (negative Y).
+            ctx.rotate(Math.PI / 2); 
+
+            ctx.fillStyle = "#000000"; // Black text color
+            ctx.font = "bold 24px Inter"; // Increased font size
+            ctx.textAlign = "center"; // Center text horizontally on its new vertical line
+            ctx.textBaseline = "middle"; // Center text vertically on its new horizontal line (effectively middle of the word)
+
+            ctx.fillText(text, 0, 0); // Draw text at the new origin (which is `textRadialOffset` from center)
+            ctx.restore();
+            // --- End Text Drawing Logic ---
+        }
+
+        // Function to draw the entire wheel
+        function drawWheel() {
+            ctx.clearRect(0, 0, wheelCanvas.width, wheelCanvas.height); // Clear the canvas before redrawing
+
+            if (items.length === 0) {
+                ctx.fillStyle = '#e2e8f0'; // Light gray for empty wheel
+                ctx.beginPath();
+                ctx.arc(wheelCanvas.width / 2, wheelCanvas.height / 2, Math.min(wheelCanvas.width / 2, wheelCanvas.height / 2) - 10, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.font = "bold 20px Inter";
+                ctx.fillStyle = "#64748b";
+                ctx.textAlign = "center";
+                ctx.fillText("Add items to spin!", wheelCanvas.width / 2, wheelCanvas.height / 2);
+                return;
+            }
+
+            arc = Math.PI / (items.length / 2); // Angle for each segment
+
+            for (let i = 0; i < items.length; i++) {
+                const angle = startAngle + i * arc;
+                const color = getSegmentColor(i); // Use a static color from the array
+                drawSegment(arc, angle, color, items[i]);
+            }
+        }
+
+        // Easing function for smooth stop (cubic ease-out)
+        function easeOut(t, b, c, d) {
+            // t: current time, b: start value, c: change in value, d: duration
+            t /= d;
+            t--;
+            return c * (t * t * t + 1) + b;
+        }
+
+        // Function to handle the spinning animation
+        function rotateWheel(currentTime) {
+            if (!animationStartTime) {
+                animationStartTime = currentTime;
+            }
+
+            const elapsedTime = currentTime - animationStartTime;
+            let progress = Math.min(elapsedTime / spinTimeTotal, 1);
+
+            // Apply easing function to the progress (0 to 1)
+            const easedProgress = easeOut(progress, 0, 1, 1);
+
+            // Calculate the current angle based on eased progress
+            // startAngle will smoothly transition from initialAnimationStartAngle to targetAnimationEndAngle
+            startAngle = initialAnimationStartAngle + (targetAnimationEndAngle - initialAnimationStartAngle) * easedProgress;
+
+            drawWheel(); // Redraw the wheel at the new angle
+
+            if (progress < 1) {
+                requestAnimationFrame(rotateWheel);
+            } else {
+                stopRotateWheel();
+            }
+        }
+
+        // Function to stop the wheel and determine the selected item
+        function stopRotateWheel() {
+            isSpinning = false;
+            // The wheel has stopped at the precisely calculated angle, so we just use the stored index
+            selectedItemSpan.textContent = items[selectedItemIndexOnStop];
+            resultDisplay.classList.remove('hidden');
+            spinButton.disabled = false; // Re-enable the button
+            spinButton.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+
+        // Event listener for input changes to redraw the wheel
+        itemInput.addEventListener('input', () => {
+            items = itemInput.value.split('\n').map(item => item.trim()).filter(item => item !== '');
+            drawWheel();
+            resultDisplay.classList.add('hidden'); // Hide result when input changes
+        });
+
+        // Event listener for the spin button
+        spinButton.addEventListener('click', () => {
+            if (isSpinning || items.length === 0) {
+                if (items.length === 0) {
+                    // Display a user-friendly message if no items are added
+                    resultDisplay.classList.remove('hidden');
+                    selectedItemSpan.textContent = "Please add items to the list before spinning!";
+                    resultDisplay.style.backgroundColor = '#fee2e2'; // bg-red-100
+                    resultDisplay.style.color = '#991b1b'; // text-red-800
+                }
+                return;
+            }
+
+            isSpinning = true;
+            spinButton.disabled = true; // Disable the button while spinning
+            spinButton.classList.add('opacity-50', 'cursor-not-allowed');
+            resultDisplay.classList.add('hidden'); // Hide previous result and reset style
+            resultDisplay.style.backgroundColor = '#e0f2fe'; // bg-blue-100
+            resultDisplay.style.color = '#1e40af'; // text-blue-800
+
+            // --- New Randomness Logic ---
+            // 1. Select a random target index for the item that will be chosen
+            selectedItemIndexOnStop = Math.floor(Math.random() * items.length);
+
+            // 2. Calculate the angle required for the center of the target segment to align with the pointer (top)
+            // The center of segment `i` (when wheel is at 0 rotation) is `i * arc + arc / 2`.
+            // The pointer is at 3 * Math.PI / 2 radians (270 degrees) relative to the canvas's 0-degree (right) axis.
+            const segmentCenterAngleAtZeroRotation = (selectedItemIndexOnStop * arc + arc / 2);
+            const pointerAngle = 3 * Math.PI / 2; // Top of the wheel (12 o'clock)
+
+            // Calculate the desired final `startAngle` value. This is the angle that makes the
+            // target segment's center align perfectly with the pointer.
+            let desiredFinalStartAngle = (pointerAngle - segmentCenterAngleAtZeroRotation);
+            // Normalize to be positive and within 0 to 2*PI
+            desiredFinalStartAngle = (desiredFinalStartAngle % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+
+            // 3. Determine a random number of full rotations to add for visual effect (e.g., 5 to 9 full rotations)
+            const numFullRevolutions = 5 + Math.floor(Math.random() * 5); 
+
+            // Calculate the total angle the wheel needs to spin from its current position
+            // to reach the desired final angle after the full revolutions.
+            let currentNormalizedStartAngle = (startAngle % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+            let rotationDifference = desiredFinalStartAngle - currentNormalizedStartAngle;
+
+            // Ensure we always spin forward (clockwise) by adding a full circle if the difference is negative
+            if (rotationDifference < 0) {
+                rotationDifference += 2 * Math.PI; 
+            }
+
+            // Total angle to spin (radians)
+            const totalSpinAmount = (numFullRevolutions * 2 * Math.PI) + rotationDifference;
+
+            // Store the initial and target end angles for the animation loop
+            initialAnimationStartAngle = startAngle;
+            targetAnimationEndAngle = startAngle + totalSpinAmount;
+            
+            animationStartTime = null; // Reset animation start time for requestAnimationFrame to begin fresh
+
+            requestAnimationFrame(rotateWheel); // Start the animation
+        });
+
+        // Initial draw when the page loads
+        window.onload = () => {
+            // Set initial items if any, or leave empty
+            itemInput.value = "Alice\nBob\nCharlie";
+            items = itemInput.value.split('\n').map(item => item.trim()).filter(item => item !== '');
+            drawWheel();
+
+            // Adjust canvas size for responsiveness
+            const resizeCanvas = () => {
+                const wrapper = document.querySelector('.wheel-wrapper');
+                let size = Math.min(wrapper.offsetWidth, wrapper.offsetHeight);
+                // Ensure a minimum size for the canvas to prevent negative radius issues
+                const minCanvasSize = 100; // Set a minimum size for the canvas
+                size = Math.max(size, minCanvasSize);
+
+                wheelCanvas.width = size;
+                wheelCanvas.height = size;
+                drawWheel(); // Redraw wheel after resizing
+            };
+
+            // Initial resize and add listener
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+        };
+    </script>
+</body>
+</html>
